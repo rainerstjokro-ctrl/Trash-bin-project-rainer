@@ -20,6 +20,7 @@ void setup() {
   pinMode(SENSOR2, INPUT_PULLUP); // Define pin sebagai input senso       // Define pin sebagai output
   pinMode(MOTOR1, OUTPUT); // Define pin sebagai input sensor    // Define pin sebagai output
   pinMode(MOTOR2, OUTPUT);
+  pinMode
 
   // Tampilan awal LCD
   // lcd.setCursor(0, 0);
