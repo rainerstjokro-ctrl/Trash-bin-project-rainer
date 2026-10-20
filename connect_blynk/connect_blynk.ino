@@ -36,7 +36,7 @@ const int trig1Pin = 4;
 const int echo1Pin = 3;
 
 // ==================== PENGATURAN ====================
-const int jumlahBaca = 5;
+const int jumlahBaca = 10;
 
 const float jarakKosong = 30.0;
 const float batasPenuh = 3.0;
