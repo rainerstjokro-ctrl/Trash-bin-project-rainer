@@ -1,4 +1,3 @@
-
 #define BLYNK_TEMPLATE_ID "TMPL698N-2x45"
 #define BLYNK_TEMPLATE_NAME "Trashcan"
 #define BLYNK_AUTH_TOKEN "pTP2uo4egmo-cXjopsKBv8VnasRfk4GC"
