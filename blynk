@@ -1,0 +1,457 @@
+
+#define BLYNK_TEMPLATE_ID "TMPL698N-2x45"
+#define BLYNK_TEMPLATE_NAME "Trashcan"
+#define BLYNK_AUTH_TOKEN "pTP2uo4egmo-cXjopsKBv8VnasRfk4GC"
+
+#define BLYNK_PRINT Serial
+
+#include <WiFiS3.h>
+#include <BlynkSimpleWifi.h>
+#include <Wire.h>
+#include <Servo.h>
+#include <LiquidCrystal_I2C.h>
+
+// ==================== WIFI ====================
+char ssid[] = "Cihuy";
+char pass[] = "1sampai8";
+
+// ==================== OBJEK ====================
+Servo servo1;
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// ==================== SENSOR PROXIMITY ====================
+#define SENSOR1 8
+#define ACTION1 9
+
+#define SENSOR2 10
+#define ACTION2 11
+
+// ==================== ULTRASONIK LOGAM ====================
+const int trigPin = 13;
+const int echoPin = 12;
+
+// ==================== ULTRASONIK NONLOGAM ====================
+const int trig1Pin = 4;
+const int echo1Pin = 3;
+
+// ==================== PENGATURAN ====================
+const int jumlahBaca = 5;
+const float jarakKosong = 30.0;
+const float batasPenuh = 3.0;
+
+const unsigned long durasiServo = 2000;
+const unsigned long intervalKirim = 1000;
+
+// ==================== TIMER ====================
+unsigned long waktuServo = 0;
+unsigned long waktuKirim = 0;
+
+// ==================== STATUS SERVO ====================
+bool servoAktif = false;
+
+// ==================== STATUS SENSOR ====================
+bool kapasitifON = false;
+bool induktifON = false;
+
+// ==================== STATUS TEMPAT SAMPAH ====================
+bool logamPenuh = false;
+bool nonlogamPenuh = false;
+
+// ==================== STATUS NOTIFIKASI ====================
+bool notifikasiLogamTerkirim = false;
+bool notifikasiNonlogamTerkirim = false;
+
+// ==================== DATA ULTRASONIK ====================
+float jarakLogam = -1;
+float jarakNonlogam = -1;
+
+int persenLogam = -1;
+int persenNonlogam = -1;
+
+// ==================== JENIS SAMPAH ====================
+String jenisSampah = "BELUM ADA";
+
+// ==================================================
+// MEMBACA JARAK ULTRASONIK
+// ==================================================
+float bacaJarak(int trig, int echo) {
+  digitalWrite(trig, LOW);
+  delayMicroseconds(3);
+
+  digitalWrite(trig, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trig, LOW);
+
+  long durasi = pulseIn(echo, HIGH, 30000);
+
+  if (durasi == 0) {
+    return -1;
+  }
+
+  float cm = durasi * 0.0343 / 2.0;
+
+  if (cm < 1.0 || cm > 400.0) {
+    return -1;
+  }
+
+  return cm;
+}
+
+// ==================================================
+// MEMBACA RATA-RATA JARAK
+// ==================================================
+float bacaRataRata(int trig, int echo) {
+  float total = 0;
+  int valid = 0;
+
+  for (int i = 0; i < jumlahBaca; i++) {
+    float hasil = bacaJarak(trig, echo);
+
+    if (hasil >= 0) {
+      total += hasil;
+      valid++;
+    }
+
+    delay(60);
+  }
+
+  if (valid >= 3) {
+    return total / valid;
+  }
+
+  return -1;
+}
+
+// ==================================================
+// MENGHITUNG PERSENTASE KAPASITAS
+// ==================================================
+int hitungPersen(float jarak) {
+  if (jarak < 0) {
+    return -1;
+  }
+
+  float persen =
+    ((jarakKosong - jarak) /
+    (jarakKosong - batasPenuh)) * 100.0;
+
+  persen = constrain(persen, 0.0, 100.0);
+
+  return (int)(persen + 0.5);
+}
+
+// ==================================================
+// MENGIRIM DATA KE BLYNK
+// V0 = Persentase logam
+// V1 = Persentase nonlogam
+// V4 = Jenis sampah
+// ==================================================
+void kirimKeBlynk() {
+  if (!Blynk.connected()) {
+    return;
+  }
+
+  if (persenLogam >= 0) {
+    Blynk.virtualWrite(V0, persenLogam);
+  }
+
+  if (persenNonlogam >= 0) {
+    Blynk.virtualWrite(V1, persenNonlogam);
+  }
+
+  Blynk.virtualWrite(V4, jenisSampah);
+}
+
+// ==================================================
+// NOTIFIKASI BLYNK
+// ==================================================
+void cekNotifikasi() {
+  if (!Blynk.connected()) {
+    return;
+  }
+
+  if (logamPenuh && !notifikasiLogamTerkirim) {
+    Blynk.logEvent(
+      "logam_penuh",
+      "Tempat sampah LOGAM sudah penuh! Segera kosongkan."
+    );
+
+    notifikasiLogamTerkirim = true;
+    Serial.println("Notifikasi LOGAM PENUH dikirim");
+  }
+
+  if (!logamPenuh) {
+    notifikasiLogamTerkirim = false;
+  }
+
+  if (nonlogamPenuh && !notifikasiNonlogamTerkirim) {
+    Blynk.logEvent(
+      "nonlogam_penuh",
+      "Tempat sampah NONLOGAM sudah penuh! Segera kosongkan."
+    );
+
+    notifikasiNonlogamTerkirim = true;
+    Serial.println("Notifikasi NONLOGAM PENUH dikirim");
+  }
+
+  if (!nonlogamPenuh) {
+    notifikasiNonlogamTerkirim = false;
+  }
+}
+
+// ==================================================
+// MENAMPILKAN DATA PADA LCD
+// ==================================================
+void tampilkanLCD() {
+  lcd.clear();
+
+  if (logamPenuh && nonlogamPenuh) {
+    lcd.setCursor(0, 0);
+    lcd.print("LOGAM PENUH!");
+
+    lcd.setCursor(0, 1);
+    lcd.print("NONLOGAM PENUH!");
+  }
+  else if (logamPenuh) {
+    lcd.setCursor(0, 0);
+    lcd.print("LOGAM PENUH!");
+
+    lcd.setCursor(0, 1);
+    lcd.print("Nonlogam: ");
+
+    if (persenNonlogam >= 0) {
+      lcd.print(persenNonlogam);
+      lcd.print("%");
+    } else {
+      lcd.print("Error");
+    }
+  }
+  else if (nonlogamPenuh) {
+    lcd.setCursor(0, 0);
+    lcd.print("NONLOGAM PENUH!");
+
+    lcd.setCursor(0, 1);
+    lcd.print("Logam: ");
+
+    if (persenLogam >= 0) {
+      lcd.print(persenLogam);
+      lcd.print("%");
+    } else {
+      lcd.print("Error");
+    }
+  }
+  else {
+    lcd.setCursor(0, 0);
+    lcd.print("L:");
+
+    if (persenLogam >= 0) {
+      lcd.print(persenLogam);
+      lcd.print("%");
+    } else {
+      lcd.print("--");
+    }
+
+    lcd.print(" NL:");
+
+    if (persenNonlogam >= 0) {
+      lcd.print(persenNonlogam);
+      lcd.print("%");
+    } else {
+      lcd.print("--");
+    }
+
+    lcd.setCursor(0, 1);
+    lcd.print("Sampah:");
+
+    if (induktifON) {
+      lcd.print(" LOGAM");
+    }
+    else if (kapasitifON) {
+      lcd.print(" NONLOGAM");
+    }
+    else {
+      lcd.print(" -");
+    }
+  }
+}
+
+// ==================================================
+// SETUP
+// ==================================================
+void setup() {
+  Serial.begin(9600);
+
+  // Satu servo pada pin 5
+  servo1.attach(5);
+  servo1.write(90);
+
+  // Sensor proximity
+  pinMode(SENSOR1, INPUT_PULLUP);
+  pinMode(ACTION1, OUTPUT);
+
+  pinMode(SENSOR2, INPUT_PULLUP);
+  pinMode(ACTION2, OUTPUT);
+
+  // Ultrasonik
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+
+  pinMode(trig1Pin, OUTPUT);
+  pinMode(echo1Pin, INPUT);
+
+  digitalWrite(trigPin, LOW);
+  digitalWrite(trig1Pin, LOW);
+
+  digitalWrite(ACTION1, LOW);
+  digitalWrite(ACTION2, LOW);
+
+  // LCD
+  lcd.init();
+  lcd.backlight();
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print("SISTEM SAMPAH");
+
+  lcd.setCursor(0, 1);
+  lcd.print("Hubungkan WiFi");
+
+  // Sambungkan Wi-Fi
+  WiFi.begin(ssid, pass);
+
+  unsigned long mulaiWiFi = millis();
+
+  while (WiFi.status() != WL_CONNECTED &&
+         millis() - mulaiWiFi < 20000) {
+    delay(250);
+    Serial.print(".");
+  }
+
+  Serial.println();
+
+  // Sambungkan Blynk
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("WiFi terhubung");
+
+    Blynk.config(BLYNK_AUTH_TOKEN);
+
+    if (Blynk.connect(5000)) {
+      Serial.println("Blynk terhubung");
+    } else {
+      Serial.println("Blynk belum terhubung");
+    }
+  } else {
+    Serial.println("WiFi gagal terhubung");
+  }
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("SISTEM SAMPAH");
+
+  lcd.setCursor(0, 1);
+  lcd.print("Siap");
+
+  delay(1000);
+}
+
+// ==================================================
+// LOOP UTAMA
+// ==================================================
+void loop() {
+  // Menjaga koneksi Blynk
+  if (WiFi.status() == WL_CONNECTED) {
+    if (Blynk.connected()) {
+      Blynk.run();
+    } else {
+      Blynk.connect(100);
+    }
+  }
+
+  // ---------- BACA PROXIMITY ----------
+  int L1 = digitalRead(SENSOR1);
+  int L2 = digitalRead(SENSOR2);
+
+  digitalWrite(ACTION1, L1 == HIGH ? HIGH : LOW);
+  digitalWrite(ACTION2, L2 == HIGH ? HIGH : LOW);
+
+  kapasitifON = (L1 == HIGH);
+  induktifON = (L2 == HIGH);
+
+  // ---------- BACA ULTRASONIK ----------
+  jarakLogam = bacaRataRata(trigPin, echoPin);
+  jarakNonlogam = bacaRataRata(trig1Pin, echo1Pin);
+
+  // ---------- HITUNG PERSENTASE ----------
+  persenLogam = hitungPersen(jarakLogam);
+  persenNonlogam = hitungPersen(jarakNonlogam);
+
+  // ---------- STATUS PENUH ----------
+  logamPenuh = (persenLogam >= 100);
+  nonlogamPenuh = (persenNonlogam >= 100);
+
+  // ---------- SERIAL MONITOR ----------
+  Serial.print("Logam: ");
+
+  if (persenLogam >= 0) {
+    Serial.print(persenLogam);
+    Serial.print("%");
+  } else {
+    Serial.print("Sensor error");
+  }
+
+  Serial.print(" | Nonlogam: ");
+
+  if (persenNonlogam >= 0) {
+    Serial.print(persenNonlogam);
+    Serial.print("%");
+  } else {
+    Serial.print("Sensor error");
+  }
+
+  Serial.println();
+
+  // ---------- KLASIFIKASI SAMPAH ----------
+  if (induktifON) {
+    jenisSampah = "LOGAM";
+
+    if (!servoAktif) {
+      servo1.write(30);
+      servoAktif = true;
+      waktuServo = millis();
+    }
+  }
+  else if (kapasitifON && !induktifON) {
+    jenisSampah = "NONLOGAM";
+
+    if (!servoAktif) {
+      servo1.write(150);
+      servoAktif = true;
+      waktuServo = millis();
+    }
+  }
+  else {
+    jenisSampah = "BELUM ADA";
+  }
+
+  // ---------- KEMBALIKAN SERVO ----------
+  if (servoAktif &&
+      millis() - waktuServo >= durasiServo) {
+    servo1.write(90);
+    servoAktif = false;
+  }
+
+  // ---------- LCD ----------
+  tampilkanLCD();
+
+  // ---------- KIRIM DATA DAN NOTIFIKASI ----------
+  if (millis() - waktuKirim >= intervalKirim) {
+    waktuKirim = millis();
+
+    kirimKeBlynk();
+    cekNotifikasi();
+
+    Serial.print("Blynk: ");
+    Serial.println(
+      Blynk.connected() ? "Terhubung" : "Terputus"
+    );
+  }
+}
